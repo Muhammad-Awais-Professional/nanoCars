@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Car Map</title>
+    <style>
+        body { font-family: Arial; }
+        #carSelect, #cmdInput, #sendBtn {
+            margin: 5px;
+        }
+        #map {
+            border:1px solid #ccc;
+            background:#eee;
+        }
+        .controls {
+            margin-top: 20px;
+        }
+        .controls p {
+            margin: 5px 0;
+        }
+        .hint {
+            font-size: 0.9em; color: #555;
+        }
+    </style>
+</head>
+<body>
+    <h1>Car Map</h1>
+    <p>
+        Select Car:
+        <select id="carSelect">
+            <option value="all">All Cars</option>
+        </select>
+        <button id="refreshBtn">Refresh Cars</button>
+        Command:
+        <input type="text" id="cmdInput" placeholder="F,B,L,R,S,RL,RR,SPIN,FLIP,CIRCLE,DANCE,ZIGZAG" />
+        <button id="sendBtn">Send</button>
+    </p>
+    <canvas id="map" width="800" height="600"></canvas>
+
+    <div class="controls">
+        <h2>Interactive Controls</h2>
+        <p>Use Arrow keys or WASD for basic moves. For tricks, try SPIN, FLIP, CIRCLE, DANCE, or ZIGZAG.</p>
+    </div>
+
+    <script>
+        const carSelect = document.getElementById('carSelect');
+        const cmdInput = document.getElementById('cmdInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const canvas = document.getElementById('map');
+        const ctx = canvas.getContext('2d');
+
+        let selectedCar = 'all';
+        let knownCars = [];
+
+        carSelect.addEventListener('change', () => {
+            selectedCar = carSelect.value;
+        });
+
+        sendBtn.addEventListener('click', () => {
+            const cmd = cmdInput.value.trim();
+            if (cmd) {
+                sendCommand(cmd, selectedCar);
+            }
+        });
+
+        refreshBtn.addEventListener('click', () => {
+            fetchCars(true);
+        });
+
+        function sendCommand(cmd, target) {
+            const formData = new FormData();
+            formData.append('cmd', cmd);
+            formData.append('target', target);
+            fetch('/command', {method:'POST', body:formData});
+        }
+
+        function fetchCars(forceUpdate=false) {
+            fetch('/cars')
+            .then(r => r.json())
+            .then(data => {
+                const addresses = data.map(car => car.addr);
+                const changed = forceUpdate || addresses.length !== knownCars.length ||
+                                !addresses.every(addr => knownCars.includes(addr));
+
+                if (changed) {
+                    knownCars = addresses;
+                    let options = '<option value="all">All Cars</option>';
+                    for (const addr of addresses) {
+                        options += `<option value="${addr}">${addr}</option>`;
+                    }
+                    carSelect.innerHTML = options;
+                    if (knownCars.includes(selectedCar) || selectedCar === 'all') {
+                        carSelect.value = selectedCar;
+                    } else {
+                        selectedCar = 'all';
+                        carSelect.value = 'all';
+                    }
+                }
+
+                drawCars(data);
+            });
+        }
+
+        function drawCars(data) {
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            data.forEach(car => {
+                const x = canvas.width/2 + car.x * 10; 
+                const y = canvas.height/2 + car.y * 10;
+                ctx.beginPath();
+                ctx.arc(x,y,10,0,Math.PI*2);
+                ctx.fillStyle = "blue";
+                ctx.fill();
+                ctx.fillStyle = "black";
+                ctx.fillText(car.addr, x+15, y+5);
+                const rad = car.yaw * Math.PI/180;
+                const x2 = x + Math.cos(rad)*20;
+                const y2 = y + Math.sin(rad)*20;
+                ctx.beginPath();
+                ctx.moveTo(x,y);
+                ctx.lineTo(x2,y2);
+                ctx.strokeStyle = "red";
+                ctx.stroke();
+            });
+        }
+
+        setInterval(() => { fetchCars(false); }, 1000);
+
+        const keyMap = {
+            'ArrowUp': 'F',
+            'ArrowDown': 'B',
+            'ArrowLeft': 'L',
+            'ArrowRight': 'R',
+            'KeyW': 'F',
+            'KeyS': 'B',
+            'KeyA': 'L',
+            'KeyD': 'R'
+        };
+
+        let activeKeys = {};
+
+        document.addEventListener('keydown', (e) => {
+            if (keyMap[e.code] && !activeKeys[e.code]) {
+                activeKeys[e.code] = true;
+                sendCommand(keyMap[e.code], selectedCar);
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (keyMap[e.code]) {
+                delete activeKeys[e.code];
+                sendCommand('S', selectedCar);
+            }
+        });
+    </script>
+</body>
+</html>
