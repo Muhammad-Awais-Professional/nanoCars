@@ -1,30 +1,32 @@
 #include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
+#include <ESPAsyncWebServer.h>
 #include <Wire.h>
-#include <MPU6050_6Axis_MotionApps20.h>  // Use the DMP library
+#include <MPU6050_6Axis_MotionApps20.h>
 
 // Motor Control Pins
-#define IN1 D8  // Right Motor Forward
-#define IN2 D7  // Right Motor Backward
-#define IN3 D4  // Left Motor Forward
-#define IN4 D3  // Left Motor Backward
+#define IN1 D8
+#define IN2 D7
+#define IN3 D4
+#define IN4 D3
 
 // Ultrasonic Sensor Pins
-#define TRIG_PIN D6  // Trigger Pin
-#define ECHO_PIN D5  // Echo Pin
+#define TRIG_PIN D6
+#define ECHO_PIN D5
 
-ESP8266WebServer server(80);  // Initialize web server on port 80
-MPU6050 mpu;  // Create MPU6050 object
+AsyncWebServer server(80);
+MPU6050 mpu;
 
 // Variables
-long distance = -1;  // Distance measured
+volatile long duration = 0;
+volatile bool echoReceived = false;
+long distance = -1;
 unsigned long lastMeasureTime = 0;
 
 // MPU6050 DMP variables
-uint8_t fifoBuffer[64];  // FIFO storage buffer
-Quaternion q;            // [w, x, y, z]         quaternion container
-VectorFloat gravity;     // [x, y, z]            gravity vector
-float ypr[3];            // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+uint8_t fifoBuffer[64];
+Quaternion q;
+VectorFloat gravity;
+float ypr[3];
 
 float estimated_yaw = 0.0;
 float estimated_pitch = 0.0;
@@ -36,8 +38,19 @@ float yawBuffer[YAW_BUFFER_SIZE];
 int yawBufferIndex = 0;
 float yawSum = 0.0;
 
+// Interrupt Service Routine for ECHO_PIN
+ICACHE_RAM_ATTR void echoISR() {
+  static unsigned long startTime = 0;
+  if (digitalRead(ECHO_PIN) == HIGH) {
+    startTime = micros();
+  } else {
+    duration = micros() - startTime;
+    echoReceived = true;
+  }
+}
+
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.println("ESP8266 Car Initialized.");
 
   // Initialize Motor Control Pins
@@ -45,30 +58,50 @@ void setup() {
   pinMode(IN2, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
-
-  // Ensure motors are stopped at startup
   stopCar();
 
   // Initialize Ultrasonic Sensor Pins
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   digitalWrite(TRIG_PIN, LOW);
+  attachInterrupt(digitalPinToInterrupt(ECHO_PIN), echoISR, CHANGE);
 
   // Setup Wi-Fi as Access Point
   WiFi.mode(WIFI_AP);
-  WiFi.softAP("ESP8266_Car", "password");  // Change SSID and Password as needed
+  WiFi.softAP("ESP8266_Car", "password");
   Serial.print("Access Point IP: ");
   Serial.println(WiFi.softAPIP());
 
   // Define Routes
-  server.on("/", handleRoot);
-  server.on("/command", handleCommand);
-  server.on("/distance", handleDistance);
-  server.on("/mpu", handleMPUData);
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/html", createWebPage());
+  });
+
+  server.on("/command", HTTP_GET, [](AsyncWebServerRequest *request){
+    if (request->hasParam("cmd")) {
+      String cmd = request->getParam("cmd")->value();
+      handleCommand(cmd);
+    } else {
+      stopCar();
+    }
+    request->send(204);  // No Content
+  });
+
+  server.on("/distance", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/plain", String(distance));
+  });
+
+  server.on("/mpu", HTTP_GET, [](AsyncWebServerRequest *request){
+    String jsonResponse = "{";
+    jsonResponse += "\"estimated_pitch\": " + String(estimated_pitch, 2) + ",";
+    jsonResponse += "\"estimated_roll\": " + String(estimated_roll, 2) + ",";
+    jsonResponse += "\"estimated_yaw\": " + String(estimated_yaw, 2) + "}";
+    request->send(200, "application/json", jsonResponse);
+  });
 
   // Start the server
   server.begin();
-  Serial.println("Web server started.");
+  Serial.println("Async Web server started.");
 
   // Initialize MPU6050 with DMP
   Wire.begin(D2, D1);  // SDA to D2, SCL to D1
@@ -82,8 +115,7 @@ void setup() {
   // Initialize DMP
   uint8_t devStatus = mpu.dmpInitialize();
 
-  // Supply your own offsets here, e.g., mpu.setXAccelOffset(yourOffset);
-  // You can find offsets by running the MPU6050_calibration sketch
+  // Supply your own offsets here
   mpu.setXAccelOffset(-2291);
   mpu.setYAccelOffset(-1602);
   mpu.setZAccelOffset(1228);
@@ -94,9 +126,7 @@ void setup() {
   if (devStatus == 0) {
     mpu.setDMPEnabled(true);
     Serial.println("DMP ready");
-
-    // Set DMP output rate (e.g., 50 Hz)
-    mpu.setRate(4);  // Set the rate to 200 / (1 + 4) = 40 Hz
+    mpu.setRate(19);  // Set to 10 Hz
   } else {
     Serial.print("DMP Initialization failed (code ");
     Serial.print(devStatus);
@@ -110,17 +140,32 @@ void setup() {
 }
 
 void loop() {
-  server.handleClient();
-
-  // Update distance every 500 ms
+  // Non-blocking distance measurement
   if (millis() - lastMeasureTime >= 500) {
     lastMeasureTime = millis();
-    distance = measureDistance();
+    if (echoReceived) {
+      if (duration != 0) {
+        distance = (duration / 2) / 29.1;
+        // Optionally print to serial
+        // Serial.print("Measured Distance: ");
+        // Serial.print(distance);
+        // Serial.println(" cm.");
+      } else {
+        distance = -1;
+        // Serial.println("No echo received.");
+      }
+      echoReceived = false;
+    }
+    // Trigger new measurement
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(2);
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
   }
 
   // Read MPU6050 data when available
   if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) {
-    // Get quaternion and gravity vectors
     mpu.dmpGetQuaternion(&q, fifoBuffer);
     mpu.dmpGetGravity(&gravity, &q);
     mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
@@ -141,125 +186,101 @@ void loop() {
     yawBuffer[yawBufferIndex] = estimated_yaw;
     yawSum += estimated_yaw;
     yawBufferIndex = (yawBufferIndex + 1) % YAW_BUFFER_SIZE;
-    float yawAverage = yawSum / YAW_BUFFER_SIZE;
-    estimated_yaw = yawAverage;
+    estimated_yaw = yawSum / YAW_BUFFER_SIZE;
 
-    // Print readings to Serial Monitor
-    Serial.print("Yaw: ");
-    Serial.print(estimated_yaw, 2);
-    Serial.print("°, Pitch: ");
-    Serial.print(estimated_pitch, 2);
-    Serial.print("°, Roll: ");
-    Serial.print(estimated_roll, 2);
-    Serial.println("°");
+    // Optional: Limit serial prints to improve performance
+    // Serial.print("Yaw: ");
+    // Serial.print(estimated_yaw, 2);
+    // Serial.print("°, Pitch: ");
+    // Serial.print(estimated_pitch, 2);
+    // Serial.print("°, Roll: ");
+    // Serial.print(estimated_roll, 2);
+    // Serial.println("°");
   }
 }
 
-// Stop all motors
+// Motor Control Functions
 void stopCar() {
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, LOW);
-  Serial.println("Car Stopped.");
+  // Serial.println("Car Stopped.");
 }
 
-// Move forward
 void moveForward() {
   digitalWrite(IN1, HIGH);
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, HIGH);
-  Serial.println("Moving Forward.");
+  // Serial.println("Moving Forward.");
 }
 
-// Move backward
 void moveBackward() {
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, HIGH);
   digitalWrite(IN3, HIGH);
   digitalWrite(IN4, LOW);
-  Serial.println("Moving Backward.");
+  // Serial.println("Moving Backward.");
 }
 
-// Turn left
 void turnLeft() {
   digitalWrite(IN1, HIGH);
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, HIGH);
   digitalWrite(IN4, LOW);
-  Serial.println("Turning Left.");
+  // Serial.println("Turning Left.");
 }
 
-// Turn right
 void turnRight() {
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, HIGH);
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, HIGH);
-  Serial.println("Turning Right.");
+  // Serial.println("Turning Right.");
 }
 
-// Rotate around left wheels (only right wheels move forward)
 void rotateAroundLeft() {
   digitalWrite(IN1, HIGH);  // Right Motor Forward
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);   // Left Motor Stopped
   digitalWrite(IN4, LOW);
-  Serial.println("Rotating Around Left Wheels.");
+  // Serial.println("Rotating Around Left Wheels.");
 }
 
-// Rotate around right wheels (only left wheels move forward)
 void rotateAroundRight() {
   digitalWrite(IN1, LOW);   // Right Motor Stopped
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);   // Left Motor Forward
   digitalWrite(IN4, HIGH);
-  Serial.println("Rotating Around Right Wheels.");
+  // Serial.println("Rotating Around Right Wheels.");
 }
 
-// Measure distance using ultrasonic sensor
-long measureDistance() {
-  long duration, measured_distance;
-
-  // Ensure TRIG_PIN is low
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-
-  // Send 10µs pulse to TRIG_PIN
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-
-  // Read ECHO_PIN
-  duration = pulseIn(ECHO_PIN, HIGH, 30000);  // Timeout after 30ms
-
-  // Calculate distance in cm
-  if (duration == 0) {
-    Serial.println("No echo received.");
-    measured_distance = -1;
+// Handle Commands
+void handleCommand(String cmd) {
+  if (cmd == "F") {
+    moveForward();
+  } else if (cmd == "B") {
+    moveBackward();
+  } else if (cmd == "L") {
+    turnLeft();
+  } else if (cmd == "R") {
+    turnRight();
+  } else if (cmd == "S") {
+    stopCar();
+  } else if (cmd == "RL") {
+    rotateAroundLeft();
+  } else if (cmd == "RR") {
+    rotateAroundRight();
   } else {
-    measured_distance = (duration / 2) / 29.1;
-    Serial.print("Measured Distance: ");
-    Serial.print(measured_distance);
-    Serial.println(" cm.");
+    Serial.println("Unknown Command.");
   }
-  return measured_distance;
-}
-
-// Handle MPU6050 data request with DMP data
-void handleMPUData() {
-  // Prepare JSON response with DMP data
-  String jsonResponse = "{";
-  jsonResponse += "\"estimated_pitch\": " + String(estimated_pitch, 2) + ",";
-  jsonResponse += "\"estimated_roll\": " + String(estimated_roll, 2) + ",";
-  jsonResponse += "\"estimated_yaw\": " + String(estimated_yaw, 2) + "}";
-  server.send(200, "application/json", jsonResponse);
 }
 
 // Create the HTML web page
 String createWebPage() {
   String page = "<!DOCTYPE html><html><head><title>ESP8266 Car Control</title>";
+  page += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
   page += "<style>";
   page += "body { text-align: center; font-family: Arial; }";
   page += ".button { width: 80px; height: 80px; font-size: 30px; margin: 10px; }";
@@ -308,44 +329,4 @@ String createWebPage() {
   page += "setInterval(updateMPUData, 500);";   // Update every 500ms
   page += "</script></body></html>";
   return page;
-}
-
-// Handle root path "/"
-void handleRoot() {
-  server.send(200, "text/html", createWebPage());
-}
-
-// Handle command path "/command?cmd=..."
-void handleCommand() {
-  if (server.hasArg("cmd")) {
-    String cmd = server.arg("cmd");
-    Serial.print("Received Command: ");
-    Serial.println(cmd);
-
-    if (cmd == "F") {
-      moveForward();
-    } else if (cmd == "B") {
-      moveBackward();
-    } else if (cmd == "L") {
-      turnLeft();
-    } else if (cmd == "R") {
-      turnRight();
-    } else if (cmd == "S") {
-      stopCar();
-    } else if (cmd == "RL") {
-      rotateAroundLeft();
-    } else if (cmd == "RR") {
-      rotateAroundRight();
-    } else {
-      Serial.println("Unknown Command.");
-    }
-  } else {
-    stopCar();
-  }
-  server.send(204, "text/plain", "");  // Send empty response
-}
-
-// Handle distance update
-void handleDistance() {
-  server.send(200, "text/plain", String(distance));
 }
