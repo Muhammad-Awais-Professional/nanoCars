@@ -1,7 +1,14 @@
 #include <ESP8266WiFi.h>
-#include <ESPAsyncWebServer.h>
 #include <Wire.h>
 #include <MPU6050_6Axis_MotionApps20.h>
+
+// ********** USER CONFIGURATION **********
+// Replace with your Wi-Fi credentials and server IP
+const char* ssid = "Server";
+const char* password = "apple123";
+const char* serverIP = "192.168.43.64"; // Laptop server IP
+const int serverPort = 12345;
+// ***************************************
 
 // Motor Control Pins
 #define IN1 D8
@@ -13,7 +20,7 @@
 #define TRIG_PIN D6
 #define ECHO_PIN D5
 
-AsyncWebServer server(80);
+WiFiClient client;
 MPU6050 mpu;
 
 // Variables
@@ -27,7 +34,6 @@ uint8_t fifoBuffer[64];
 Quaternion q;
 VectorFloat gravity;
 float ypr[3];
-
 float estimated_yaw = 0.0;
 float estimated_pitch = 0.0;
 float estimated_roll = 0.0;
@@ -50,7 +56,7 @@ ICACHE_RAM_ATTR void echoISR() {
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
   Serial.println("ESP8266 Car Initialized.");
 
   // Initialize Motor Control Pins
@@ -66,42 +72,24 @@ void setup() {
   digitalWrite(TRIG_PIN, LOW);
   attachInterrupt(digitalPinToInterrupt(ECHO_PIN), echoISR, CHANGE);
 
-  // Setup Wi-Fi as Access Point
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP("ESP8266_Car", "password");
-  Serial.print("Access Point IP: ");
-  Serial.println(WiFi.softAPIP());
+  // Connect to Wi-Fi
+  Serial.print("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected.");
+  Serial.print("IP: "); Serial.println(WiFi.localIP());
 
-  // Define Routes
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(200, "text/html", createWebPage());
-  });
-
-  server.on("/command", HTTP_GET, [](AsyncWebServerRequest *request){
-    if (request->hasParam("cmd")) {
-      String cmd = request->getParam("cmd")->value();
-      handleCommand(cmd);
-    } else {
-      stopCar();
-    }
-    request->send(204);  // No Content
-  });
-
-  server.on("/distance", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(200, "text/plain", String(distance));
-  });
-
-  server.on("/mpu", HTTP_GET, [](AsyncWebServerRequest *request){
-    String jsonResponse = "{";
-    jsonResponse += "\"estimated_pitch\": " + String(estimated_pitch, 2) + ",";
-    jsonResponse += "\"estimated_roll\": " + String(estimated_roll, 2) + ",";
-    jsonResponse += "\"estimated_yaw\": " + String(estimated_yaw, 2) + "}";
-    request->send(200, "application/json", jsonResponse);
-  });
-
-  // Start the server
-  server.begin();
-  Serial.println("Async Web server started.");
+  // Connect to TCP server
+  Serial.print("Connecting to server ");
+  Serial.print(serverIP); Serial.print(":"); Serial.println(serverPort);
+  while (!client.connect(serverIP, serverPort)) {
+    Serial.println("Connection to server failed, retrying...");
+    delay(2000);
+  }
+  Serial.println("Connected to server.");
 
   // Initialize MPU6050 with DMP
   Wire.begin(D2, D1);  // SDA to D2, SCL to D1
@@ -112,10 +100,7 @@ void setup() {
     Serial.println("MPU6050 connection failed");
   }
 
-  // Initialize DMP
   uint8_t devStatus = mpu.dmpInitialize();
-
-  // Supply your own offsets here
   mpu.setXAccelOffset(-2291);
   mpu.setYAccelOffset(-1602);
   mpu.setZAccelOffset(1228);
@@ -126,7 +111,7 @@ void setup() {
   if (devStatus == 0) {
     mpu.setDMPEnabled(true);
     Serial.println("DMP ready");
-    mpu.setRate(19);  // Set to 10 Hz
+    mpu.setRate(19);  // ~10 Hz
   } else {
     Serial.print("DMP Initialization failed (code ");
     Serial.print(devStatus);
@@ -146,13 +131,8 @@ void loop() {
     if (echoReceived) {
       if (duration != 0) {
         distance = (duration / 2) / 29.1;
-        // Optionally print to serial
-        // Serial.print("Measured Distance: ");
-        // Serial.print(distance);
-        // Serial.println(" cm.");
       } else {
         distance = -1;
-        // Serial.println("No echo received.");
       }
       echoReceived = false;
     }
@@ -164,21 +144,15 @@ void loop() {
     digitalWrite(TRIG_PIN, LOW);
   }
 
-  // Read MPU6050 data when available
+  // Read MPU6050 data
   if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) {
     mpu.dmpGetQuaternion(&q, fifoBuffer);
     mpu.dmpGetGravity(&gravity, &q);
     mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-
-    // Convert yaw, pitch, roll from radians to degrees
     float raw_yaw = ypr[0] * 180 / PI;
     estimated_pitch = ypr[1] * 180 / PI;
     estimated_roll = ypr[2] * 180 / PI;
-
-    // Map yaw angle from -180° to 180° to 0° to 360°
-    if (raw_yaw < 0) {
-      raw_yaw += 360.0;
-    }
+    if (raw_yaw < 0) raw_yaw += 360.0;
     estimated_yaw = raw_yaw;
 
     // Apply moving average filter to yaw
@@ -187,15 +161,33 @@ void loop() {
     yawSum += estimated_yaw;
     yawBufferIndex = (yawBufferIndex + 1) % YAW_BUFFER_SIZE;
     estimated_yaw = yawSum / YAW_BUFFER_SIZE;
+  }
 
-    // Optional: Limit serial prints to improve performance
-    // Serial.print("Yaw: ");
-    // Serial.print(estimated_yaw, 2);
-    // Serial.print("°, Pitch: ");
-    // Serial.print(estimated_pitch, 2);
-    // Serial.print("°, Roll: ");
-    // Serial.print(estimated_roll, 2);
-    // Serial.println("°");
+  // Check if data is available from server
+  if (client.available()) {
+    String cmd = client.readStringUntil('\n');
+    cmd.trim();
+    Serial.print("Command from server: "); Serial.println(cmd);
+    handleCommand(cmd);
+  }
+
+  // (Optional) send sensor data periodically
+  static unsigned long lastSend = 0;
+  if (millis() - lastSend > 1000) {
+    lastSend = millis();
+    String data = "DIST:" + String(distance) + " P:" + String(estimated_pitch,2) + 
+                  " R:" + String(estimated_roll,2) + " Y:" + String(estimated_yaw,2) + "\n";
+    client.print(data);
+  }
+
+  // If disconnected, try to reconnect
+  if (!client.connected()) {
+    Serial.println("Disconnected from server, retrying...");
+    while (!client.connect(serverIP, serverPort)) {
+      Serial.println("Failed to reconnect. Retrying...");
+      delay(2000);
+    }
+    Serial.println("Reconnected to server.");
   }
 }
 
@@ -205,7 +197,7 @@ void stopCar() {
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, LOW);
-  // Serial.println("Car Stopped.");
+  Serial.println("Car Stopped.");
 }
 
 void moveForward() {
@@ -213,7 +205,7 @@ void moveForward() {
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, HIGH);
-  // Serial.println("Moving Forward.");
+  Serial.println("Moving Forward.");
 }
 
 void moveBackward() {
@@ -221,7 +213,7 @@ void moveBackward() {
   digitalWrite(IN2, HIGH);
   digitalWrite(IN3, HIGH);
   digitalWrite(IN4, LOW);
-  // Serial.println("Moving Backward.");
+  Serial.println("Moving Backward.");
 }
 
 void turnLeft() {
@@ -229,7 +221,7 @@ void turnLeft() {
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, HIGH);
   digitalWrite(IN4, LOW);
-  // Serial.println("Turning Left.");
+  Serial.println("Turning Left.");
 }
 
 void turnRight() {
@@ -237,7 +229,7 @@ void turnRight() {
   digitalWrite(IN2, HIGH);
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, HIGH);
-  // Serial.println("Turning Right.");
+  Serial.println("Turning Right.");
 }
 
 void rotateAroundLeft() {
@@ -245,7 +237,7 @@ void rotateAroundLeft() {
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);   // Left Motor Stopped
   digitalWrite(IN4, LOW);
-  // Serial.println("Rotating Around Left Wheels.");
+  Serial.println("Rotating Around Left Wheels.");
 }
 
 void rotateAroundRight() {
@@ -253,7 +245,7 @@ void rotateAroundRight() {
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);   // Left Motor Forward
   digitalWrite(IN4, HIGH);
-  // Serial.println("Rotating Around Right Wheels.");
+  Serial.println("Rotating Around Right Wheels.");
 }
 
 // Handle Commands
@@ -275,58 +267,4 @@ void handleCommand(String cmd) {
   } else {
     Serial.println("Unknown Command.");
   }
-}
-
-// Create the HTML web page
-String createWebPage() {
-  String page = "<!DOCTYPE html><html><head><title>ESP8266 Car Control</title>";
-  page += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-  page += "<style>";
-  page += "body { text-align: center; font-family: Arial; }";
-  page += ".button { width: 80px; height: 80px; font-size: 30px; margin: 10px; }";
-  page += "</style></head><body>";
-  page += "<h1>ESP8266 Car Control</h1>";
-  page += "<div>";
-  page += "<button class='button' id='forward'>Forward</button><br>";
-  page += "<button class='button' id='left'>Left</button>";
-  page += "<button class='button' id='stop'>Stop</button>";
-  page += "<button class='button' id='right'>Right</button><br>";
-  page += "<button class='button' id='backward'>Back</button><br>";
-  page += "<button class='button' id='rotateLeft'>Rotate L</button>";
-  page += "<button class='button' id='rotateRight'>Rotate R</button>";
-  page += "</div>";
-  page += "<p>Distance: <span id='distance'>-</span> cm</p>";
-  page += "<p>MPU6050 Data:</p>";
-  page += "<p>Pitch: <span id='pitch'>-</span>°, Roll: <span id='roll'>-</span>°, Yaw: <span id='yaw'>-</span>°</p>";
-  page += "<script>";
-  page += "function sendCommand(cmd){ fetch('/command?cmd=' + cmd); }";
-  page += "function addButtonEvent(id, cmd){";
-  page += "  var button = document.getElementById(id);";
-  page += "  button.addEventListener('touchstart', function(e){ e.preventDefault(); sendCommand(cmd); });";
-  page += "  button.addEventListener('touchend', function(e){ e.preventDefault(); sendCommand('S'); });";
-  page += "  button.addEventListener('mousedown', function(){ sendCommand(cmd); });";
-  page += "  button.addEventListener('mouseup', function(){ sendCommand('S'); });";
-  page += "}";
-  page += "addButtonEvent('forward', 'F');";
-  page += "addButtonEvent('backward', 'B');";
-  page += "addButtonEvent('left', 'L');";
-  page += "addButtonEvent('right', 'R');";
-  page += "addButtonEvent('rotateLeft', 'RL');";
-  page += "addButtonEvent('rotateRight', 'RR');";
-  page += "function updateDistance(){";
-  page += "  fetch('/distance').then(function(response){ return response.text(); }).then(function(data){";
-  page += "    document.getElementById('distance').innerHTML = data;";
-  page += "  });";
-  page += "}";
-  page += "function updateMPUData(){";
-  page += "  fetch('/mpu').then(function(response){ return response.json(); }).then(function(data){";
-  page += "    document.getElementById('pitch').innerHTML = data.estimated_pitch.toFixed(2);";
-  page += "    document.getElementById('roll').innerHTML = data.estimated_roll.toFixed(2);";
-  page += "    document.getElementById('yaw').innerHTML = data.estimated_yaw.toFixed(2);";
-  page += "  });";
-  page += "}";
-  page += "setInterval(updateDistance, 500);";  // Update every 500ms
-  page += "setInterval(updateMPUData, 500);";   // Update every 500ms
-  page += "</script></body></html>";
-  return page;
 }
