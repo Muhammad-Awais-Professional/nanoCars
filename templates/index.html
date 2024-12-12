@@ -3,16 +3,59 @@
 <head>
     <title>Car Map</title>
     <style>
-        body { font-family: Arial; }
-        #carSelect, #cmdInput, #sendBtn {
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f0f0;
+            margin:0; padding:0;
+        }
+        header {
+            background: #444;
+            color: #fff;
+            padding: 10px;
+        }
+        h1 {
+            margin: 0;
+        }
+        .container {
+            padding: 10px;
+        }
+        #controls {
+            background: #fff;
+            padding: 10px;
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        #carSelect, #cmdInput, #sendBtn, #refreshBtn {
             margin: 5px;
+            padding: 5px;
+            border-radius: 3px;
+            border: 1px solid #ccc;
+        }
+        #sendBtn, #refreshBtn {
+            background: #007BFF;
+            color: #fff;
+            border: none;
+            cursor:pointer;
+        }
+        #sendBtn:hover, #refreshBtn:hover {
+            background: #0056b3;
         }
         #map {
             border:1px solid #ccc;
             background:#eee;
+            display: block;
+            margin: 20px auto;
         }
         .controls {
             margin-top: 20px;
+            background:#fff;
+            padding:10px;
+            border-radius:5px;
+        }
+        .controls h2 {
+            margin-top:0;
         }
         .controls p {
             margin: 5px 0;
@@ -20,25 +63,43 @@
         .hint {
             font-size: 0.9em; color: #555;
         }
+        #info {
+            margin-top: 10px;
+            font-size: 0.9em;
+            color: #333;
+            background: #fff;
+            padding:10px;
+            border-radius:5px;
+        }
     </style>
 </head>
 <body>
-    <h1>Car Map</h1>
-    <p>
-        Select Car:
-        <select id="carSelect">
-            <option value="all">All Cars</option>
-        </select>
-        <button id="refreshBtn">Refresh Cars</button>
-        Command:
-        <input type="text" id="cmdInput" placeholder="F,B,L,R,S,RL,RR,SPIN,FLIP,CIRCLE,DANCE,ZIGZAG" />
-        <button id="sendBtn">Send</button>
-    </p>
-    <canvas id="map" width="800" height="600"></canvas>
+    <header><h1>Car Map</h1></header>
+    <div class="container">
+        <div id="controls">
+            Select Car:
+            <select id="carSelect">
+                <option value="all">All Cars</option>
+            </select>
+            <button id="refreshBtn">Refresh Cars</button>
+            Command:
+            <input type="text" id="cmdInput" placeholder="F,B,L,R,S,RL,RR,SPIN,FLIP,CIRCLE,DANCE,ZIGZAG,INIT,ROT:<deg>,MOVE:<cm>" />
+            <button id="sendBtn">Send</button>
+        </div>
 
-    <div class="controls">
-        <h2>Interactive Controls</h2>
-        <p>Use Arrow keys or WASD for basic moves. For tricks, try SPIN, FLIP, CIRCLE, DANCE, or ZIGZAG.</p>
+        <canvas id="map" width="800" height="600"></canvas>
+
+        <div class="controls">
+            <h2>Interactive Controls</h2>
+            <p>Use Arrow keys or WASD for basic moves.</p>
+            <p>Try commands like:  
+               - INIT (to setup environment)  
+               - ROT:90 or MOVE:25  
+               - Tricks: SPIN, FLIP, CIRCLE, DANCE, ZIGZAG, SQUARE, FIG8, WAVE
+            </p>
+        </div>
+
+        <div id="info"></div>
     </div>
 
     <script>
@@ -48,9 +109,12 @@
         const refreshBtn = document.getElementById('refreshBtn');
         const canvas = document.getElementById('map');
         const ctx = canvas.getContext('2d');
+        const infoDiv = document.getElementById('info');
 
         let selectedCar = 'all';
         let knownCars = [];
+        let envWidth = 0;
+        let envHeight = 0;
 
         carSelect.addEventListener('change', () => {
             selectedCar = carSelect.value;
@@ -103,27 +167,85 @@
 
         function drawCars(data) {
             ctx.clearRect(0,0,canvas.width,canvas.height);
+
+            let carEnv = data.find(c => c.addr === selectedCar) || data[0];
+            if (carEnv) {
+                envWidth = carEnv.env_width;
+                envHeight = carEnv.env_height;
+            }
+
+            let scale = 1.0;
+            let offsetX = canvas.width/2, offsetY = canvas.height/2;
+
+            if (envWidth > 0 && envHeight > 0) {
+                scale = Math.min(canvas.width / envWidth, canvas.height / envHeight);
+                offsetX = (canvas.width - envWidth * scale) / 2;
+                offsetY = (canvas.height - envHeight * scale) / 2;
+
+                // Draw environment boundary
+                ctx.strokeStyle = "green";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(offsetX, offsetY, envWidth*scale, envHeight*scale);
+            }
+
             data.forEach(car => {
-                const x = canvas.width/2 + car.x * 10; 
-                const y = canvas.height/2 + car.y * 10;
+                let x, y;
+                if (envWidth > 0 && envHeight > 0) {
+                    // y is inverted as canvas Y grows down
+                    x = offsetX + (envWidth/2 + car.x)*scale;
+                    y = offsetY + (envHeight/2 - car.y)*scale;
+                } else {
+                    // Without INIT, just plot small scale around center
+                    x = canvas.width/2 + car.x*2;
+                    y = canvas.height/2 - car.y*2;
+                }
+
+                // Draw the car as a circle
                 ctx.beginPath();
-                ctx.arc(x,y,10,0,Math.PI*2);
+                ctx.arc(x,y,8,0,Math.PI*2);
                 ctx.fillStyle = "blue";
                 ctx.fill();
                 ctx.fillStyle = "black";
-                ctx.fillText(car.addr, x+15, y+5);
+                ctx.font = "12px Arial";
+                ctx.fillText(car.addr, x+12, y+4);
+
+                // Draw direction line (car yaw)
                 const rad = car.yaw * Math.PI/180;
-                const x2 = x + Math.cos(rad)*20;
-                const y2 = y + Math.sin(rad)*20;
+                const lineLength = 20;
+                const x2 = x + Math.cos(rad)*lineLength;
+                const y2 = y - Math.sin(rad)*lineLength;
                 ctx.beginPath();
                 ctx.moveTo(x,y);
                 ctx.lineTo(x2,y2);
                 ctx.strokeStyle = "red";
+                ctx.lineWidth = 2;
                 ctx.stroke();
             });
+
+            // Update info
+            if (data.length > 0) {
+                let infoStr = "<strong>Cars:</strong> " + data.map(c => c.addr).join(", ") + "<br>";
+                if (envWidth > 0 && envHeight > 0) {
+                    infoStr += "<strong>Environment:</strong> " + envWidth.toFixed(2) + "cm x " + envHeight.toFixed(2) + "cm<br>";
+                } else {
+                    infoStr += "<strong>Environment:</strong> Not initialized (Run INIT).<br>";
+                }
+
+                let sc = data.find(c => c.addr === selectedCar);
+                if (sc) {
+                    infoStr += "<strong>Selected Car ("+sc.addr+"):</strong> Distance: " 
+                        + sc.distance.toFixed(2) 
+                        + "cm, Yaw: " 
+                        + sc.yaw.toFixed(2) 
+                        + "°";
+                }
+
+                infoDiv.innerHTML = infoStr;
+            }
         }
 
-        setInterval(() => { fetchCars(false); }, 1000);
+        // Update frequently for real-time movement (200ms)
+        setInterval(() => { fetchCars(false); }, 200);
 
         const keyMap = {
             'ArrowUp': 'F',
