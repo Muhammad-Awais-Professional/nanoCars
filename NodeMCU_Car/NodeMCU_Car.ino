@@ -2,11 +2,12 @@
 #include <Wire.h>
 #include <MPU6050_6Axis_MotionApps20.h>
 
+// ********** USER CONFIGURATION **********
 const char* ssid = "Server";
 const char* password = "apple123";
-const char* serverIP = "192.168.43.64"; 
+const char* serverIP = "192.168.43.64"; // Replace with your server's IP
 const int serverPort = 12345;
-
+// ****************************************
 
 // Motor Control Pins
 #define IN1 D8
