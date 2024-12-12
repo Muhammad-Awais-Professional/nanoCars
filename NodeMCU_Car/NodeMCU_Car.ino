@@ -2,13 +2,11 @@
 #include <Wire.h>
 #include <MPU6050_6Axis_MotionApps20.h>
 
-// ********** USER CONFIGURATION **********
-// Replace with your Wi-Fi credentials and server IP
 const char* ssid = "Server";
 const char* password = "apple123";
-const char* serverIP = "192.168.43.64"; // Laptop server IP
+const char* serverIP = "192.168.43.64"; 
 const int serverPort = 12345;
-// ***************************************
+
 
 // Motor Control Pins
 #define IN1 D8
@@ -29,7 +27,6 @@ volatile bool echoReceived = false;
 long distance = -1;
 unsigned long lastMeasureTime = 0;
 
-// MPU6050 DMP variables
 uint8_t fifoBuffer[64];
 Quaternion q;
 VectorFloat gravity;
@@ -44,7 +41,6 @@ float yawBuffer[YAW_BUFFER_SIZE];
 int yawBufferIndex = 0;
 float yawSum = 0.0;
 
-// Interrupt Service Routine for ECHO_PIN
 ICACHE_RAM_ATTR void echoISR() {
   static unsigned long startTime = 0;
   if (digitalRead(ECHO_PIN) == HIGH) {
@@ -153,12 +149,12 @@ void loop() {
     estimated_pitch = ypr[1] * 180 / PI;
     estimated_roll = ypr[2] * 180 / PI;
     if (raw_yaw < 0) raw_yaw += 360.0;
-    estimated_yaw = raw_yaw;
+    float current_yaw = raw_yaw;
 
     // Apply moving average filter to yaw
     yawSum -= yawBuffer[yawBufferIndex];
-    yawBuffer[yawBufferIndex] = estimated_yaw;
-    yawSum += estimated_yaw;
+    yawBuffer[yawBufferIndex] = current_yaw;
+    yawSum += current_yaw;
     yawBufferIndex = (yawBufferIndex + 1) % YAW_BUFFER_SIZE;
     estimated_yaw = yawSum / YAW_BUFFER_SIZE;
   }
@@ -171,7 +167,7 @@ void loop() {
     handleCommand(cmd);
   }
 
-  // (Optional) send sensor data periodically
+  // Periodically send sensor data
   static unsigned long lastSend = 0;
   if (millis() - lastSend > 1000) {
     lastSend = millis();
@@ -205,7 +201,7 @@ void moveForward() {
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, HIGH);
-  Serial.println("Moving Forward.");
+  //Serial.println("Moving Forward.");
 }
 
 void moveBackward() {
@@ -213,7 +209,7 @@ void moveBackward() {
   digitalWrite(IN2, HIGH);
   digitalWrite(IN3, HIGH);
   digitalWrite(IN4, LOW);
-  Serial.println("Moving Backward.");
+  //Serial.println("Moving Backward.");
 }
 
 void turnLeft() {
@@ -221,7 +217,7 @@ void turnLeft() {
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, HIGH);
   digitalWrite(IN4, LOW);
-  Serial.println("Turning Left.");
+  //Serial.println("Turning Left.");
 }
 
 void turnRight() {
@@ -229,23 +225,63 @@ void turnRight() {
   digitalWrite(IN2, HIGH);
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, HIGH);
-  Serial.println("Turning Right.");
+  //Serial.println("Turning Right.");
 }
 
 void rotateAroundLeft() {
   digitalWrite(IN1, HIGH);  // Right Motor Forward
   digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW);   // Left Motor Stopped
+  digitalWrite(IN3, LOW);   
   digitalWrite(IN4, LOW);
-  Serial.println("Rotating Around Left Wheels.");
+  //Serial.println("Rotating Around Left Wheels.");
 }
 
 void rotateAroundRight() {
-  digitalWrite(IN1, LOW);   // Right Motor Stopped
+  digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW);   // Left Motor Forward
+  digitalWrite(IN3, LOW);   
   digitalWrite(IN4, HIGH);
-  Serial.println("Rotating Around Right Wheels.");
+  //Serial.println("Rotating Around Right Wheels.");
+}
+
+// Move forward by a specified distance (in cm) based on ultrasonic readings
+void moveForwardByDistance(float distToMove) {
+  // Wait for a valid distance reading
+  if (distance < 0) {
+    Serial.println("No valid distance reading. Can't move by distance.");
+    return;
+  }
+
+  float startDist = distance;
+  float targetDist = startDist - distToMove;
+  if (targetDist < 0) targetDist = 0; // Prevent going negative if no obstacle?
+
+  Serial.print("Moving forward by "); Serial.print(distToMove); Serial.println(" cm...");
+  Serial.print("StartDist: "); Serial.println(startDist);
+  Serial.print("TargetDist: "); Serial.println(targetDist);
+
+  unsigned long startTime = millis();
+  const float THRESHOLD = 2.0; // cm threshold
+  while (true) {
+    // Move forward
+    moveForward();
+
+    // Check if we got close to the target
+    if (distance > 0 && fabs(distance - targetDist) <= THRESHOLD) {
+      stopCar();
+      Serial.println("Reached target distance.");
+      break;
+    }
+
+    // Timeout to prevent endless loop
+    if (millis() - startTime > 15000) { // 15 seconds timeout
+      stopCar();
+      Serial.println("Timeout reached, stopping.");
+      break;
+    }
+
+    delay(100);
+  }
 }
 
 // Handle Commands
@@ -264,7 +300,70 @@ void handleCommand(String cmd) {
     rotateAroundLeft();
   } else if (cmd == "RR") {
     rotateAroundRight();
+  } else if (cmd.startsWith("ROT:")) {
+    cmd.replace("ROT:", "");
+    cmd.trim();
+    float angle = cmd.toFloat();
+    Serial.print("Rotating by angle: "); Serial.println(angle);
+    rotateToAngle(angle);
+  } else if (cmd.startsWith("MOVE:")) {
+    cmd.replace("MOVE:", "");
+    cmd.trim();
+    float distVal = cmd.toFloat();
+    moveForwardByDistance(distVal);
   } else {
     Serial.println("Unknown Command.");
+  }
+}
+
+// Normalize angle to 0-360 range
+float normalizeAngle(float angle) {
+  while (angle < 0) angle += 360.0;
+  while (angle >= 360.0) angle -= 360.0;
+  return angle;
+}
+
+// Get current yaw
+float getCurrentYaw() {
+  return estimated_yaw;
+}
+
+// Rotate to a specific angle (relative)
+void rotateToAngle(float relativeAngle) {
+  float startYaw = getCurrentYaw();
+  float targetYaw = startYaw + relativeAngle;
+  targetYaw = normalizeAngle(targetYaw);
+
+  float cwDistance = (startYaw > targetYaw) ? (startYaw - targetYaw) : (startYaw + 360.0 - targetYaw);
+  float ccwDistance = 360.0 - cwDistance;
+
+  bool rotateClockwise = (cwDistance < ccwDistance);
+  const float THRESHOLD = 2.0; // degrees
+  unsigned long startTime = millis();
+
+  while (true) {
+    float current = getCurrentYaw();
+    float diff = targetYaw - current;
+    diff = normalizeAngle(diff);
+
+    if (fabs(diff) < THRESHOLD || fabs(diff - 360.0) < THRESHOLD) {
+      stopCar();
+      Serial.println("Reached target angle.");
+      break;
+    }
+
+    if (millis() - startTime > 15000) {
+      stopCar();
+      Serial.println("Rotation timeout - stopping.");
+      break;
+    }
+
+    if (rotateClockwise) {
+      rotateAroundLeft(); 
+    } else {
+      rotateAroundRight();
+    }
+
+    delay(100);
   }
 }
