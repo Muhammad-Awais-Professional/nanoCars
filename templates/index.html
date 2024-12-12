@@ -263,8 +263,8 @@
             S: document.getElementById('cmdS')
         };
 
-        let selectedCar = 'all';
-        let knownCars = [];
+        let selectedCarId = 'all'; // Updated to store car UUIDs
+        let knownCars = []; // Array to store car objects
         let envWidth = 0;
         let envHeight = 0;
 
@@ -279,13 +279,13 @@
 
         // Event Listeners
         carSelect.addEventListener('change', () => {
-            selectedCar = carSelect.value;
+            selectedCarId = carSelect.value;
         });
 
         sendBtn.addEventListener('click', () => {
             const cmd = cmdInput.value.trim();
             if (cmd) {
-                sendCommand(cmd, selectedCar);
+                sendCommand(cmd, selectedCarId);
                 cmdInput.value = '';
             }
         });
@@ -298,50 +298,59 @@
         Object.keys(mobileButtons).forEach(key => {
             mobileButtons[key].addEventListener('touchstart', (e) => {
                 e.preventDefault();
-                sendCommand(key, selectedCar);
+                sendCommand(key, selectedCarId);
             });
             mobileButtons[key].addEventListener('mousedown', (e) => {
                 e.preventDefault();
-                sendCommand(key, selectedCar);
+                sendCommand(key, selectedCarId);
             });
             // Optionally, stop command on touchend/mouseup
             mobileButtons[key].addEventListener('touchend', (e) => {
                 e.preventDefault();
-                sendCommand('S', selectedCar);
+                sendCommand('S', selectedCarId);
             });
             mobileButtons[key].addEventListener('mouseup', (e) => {
                 e.preventDefault();
-                sendCommand('S', selectedCar);
+                sendCommand('S', selectedCarId);
             });
         });
 
-        function sendCommand(cmd, target) {
+        /**
+         * Sends a command to the backend with the specified target.
+         * @param {string} cmd - The command to send.
+         * @param {string} targetId - The UUID of the target car or 'all'.
+         */
+        function sendCommand(cmd, targetId) {
             const formData = new FormData();
             formData.append('cmd', cmd);
-            formData.append('target', target);
+            formData.append('target', targetId);
             fetch('/command', {method:'POST', body:formData})
                 .catch(err => console.error('Command Error:', err));
         }
 
+        /**
+         * Fetches the list of cars from the backend.
+         * @param {boolean} forceUpdate - Whether to forcefully update the dropdown.
+         */
         function fetchCars(forceUpdate=false) {
             fetch('/cars')
             .then(r => r.json())
             .then(data => {
-                const addresses = data.map(car => car.addr);
-                const changed = forceUpdate || addresses.length !== knownCars.length ||
-                                !addresses.every(addr => knownCars.includes(addr));
+                // Determine if the car list has changed
+                const carsChanged = forceUpdate || data.length !== knownCars.length ||
+                                    !data.every(car => knownCars.some(kc => kc.id === car.id));
 
-                if (changed) {
-                    knownCars = addresses;
+                if (carsChanged) {
+                    knownCars = data;
                     let options = '<option value="all">All Cars</option>';
-                    for (const addr of addresses) {
-                        options += `<option value="${addr}">${addr}</option>`;
+                    for (const car of data) {
+                        options += `<option value="${car.id}">${car.addr} (${car.id})</option>`;
                     }
                     carSelect.innerHTML = options;
-                    if (knownCars.includes(selectedCar) || selectedCar === 'all') {
-                        carSelect.value = selectedCar;
+                    if (knownCars.some(car => car.id === selectedCarId) || selectedCarId === 'all') {
+                        carSelect.value = selectedCarId;
                     } else {
-                        selectedCar = 'all';
+                        selectedCarId = 'all';
                         carSelect.value = 'all';
                     }
                 }
@@ -351,44 +360,50 @@
             .catch(err => console.error('Fetch Cars Error:', err));
         }
 
+        /**
+         * Draws the cars on the canvas.
+         * @param {Array} data - The list of car objects.
+         */
         function drawCars(data) {
             ctx.clearRect(0,0,canvas.width,canvas.height);
 
-            let carEnv = data.find(c => c.addr === selectedCar) || data[0];
-            if (carEnv) {
-                envWidth = carEnv.env_width;
-                envHeight = carEnv.env_height;
+            // Determine environment dimensions from the first car if available
+            let envWidthLocal = 0, envHeightLocal = 0;
+            if (data.length > 0) {
+                const env = data[0];
+                envWidthLocal = env.env_width;
+                envHeightLocal = env.env_height;
             }
 
             let scale = 1.0;
-            let offsetX = canvas.width/2, offsetY = canvas.height/2;
+            let offsetX = canvas.width / 2, offsetY = canvas.height / 2;
 
-            if (envWidth > 0 && envHeight > 0) {
-                scale = Math.min(canvas.width / envWidth, canvas.height / envHeight) * 0.9;
-                offsetX = (canvas.width - envWidth * scale) / 2;
-                offsetY = (canvas.height - envHeight * scale) / 2;
+            if (envWidthLocal > 0 && envHeightLocal > 0) {
+                scale = Math.min(canvas.width / envWidthLocal, canvas.height / envHeightLocal) * 0.9;
+                offsetX = (canvas.width - envWidthLocal * scale) / 2;
+                offsetY = (canvas.height - envHeightLocal * scale) / 2;
 
                 // Draw environment boundary
                 ctx.strokeStyle = "#27ae60";
                 ctx.lineWidth = 3;
-                ctx.strokeRect(offsetX, offsetY, envWidth*scale, envHeight*scale);
+                ctx.strokeRect(offsetX, offsetY, envWidthLocal * scale, envHeightLocal * scale);
             }
 
             data.forEach(car => {
                 let x, y;
-                if (envWidth > 0 && envHeight > 0) {
+                if (envWidthLocal > 0 && envHeightLocal > 0) {
                     // y is inverted as canvas Y grows down
-                    x = offsetX + (envWidth/2 + car.x)*scale;
-                    y = offsetY + (envHeight/2 - car.y)*scale;
+                    x = offsetX + (envWidthLocal / 2 + car.x) * scale;
+                    y = offsetY + (envHeightLocal / 2 - car.y) * scale;
                 } else {
                     // Without INIT, just plot small scale around center
-                    x = canvas.width/2 + car.x*2;
-                    y = canvas.height/2 - car.y*2;
+                    x = canvas.width / 2 + car.x * 2;
+                    y = canvas.height / 2 - car.y * 2;
                 }
 
                 // Draw the car as a circle
                 ctx.beginPath();
-                ctx.arc(x, y, 10, 0, Math.PI*2);
+                ctx.arc(x, y, 10, 0, Math.PI * 2);
                 ctx.fillStyle = "#2980b9";
                 ctx.fill();
                 ctx.fillStyle = "#fff";
@@ -398,10 +413,10 @@
                 ctx.fillText(car.addr, x + 12, y);
 
                 // Draw direction line (car yaw)
-                const rad = car.yaw * Math.PI/180;
+                const rad = car.yaw * Math.PI / 180;
                 const lineLength = 25;
-                const x2 = x + Math.cos(rad)*lineLength;
-                const y2 = y - Math.sin(rad)*lineLength;
+                const x2 = x + Math.cos(rad) * lineLength;
+                const y2 = y - Math.sin(rad) * lineLength;
                 ctx.beginPath();
                 ctx.moveTo(x, y);
                 ctx.lineTo(x2, y2);
@@ -412,15 +427,15 @@
 
             // Update info
             if (data.length > 0) {
-                let infoStr = "<strong>Cars:</strong> " + data.map(c => c.addr).join(", ") + "<br>";
-                if (envWidth > 0 && envHeight > 0) {
-                    infoStr += "<strong>Environment:</strong> " + envWidth.toFixed(2) + "cm x " + envHeight.toFixed(2) + "cm<br>";
+                let infoStr = "<strong>Cars:</strong> " + data.map(c => `${c.addr} (${c.id})`).join(", ") + "<br>";
+                if (envWidthLocal > 0 && envHeightLocal > 0) {
+                    infoStr += "<strong>Environment:</strong> " + envWidthLocal.toFixed(2) + "cm x " + envHeightLocal.toFixed(2) + "cm<br>";
                 } else {
                     infoStr += "<strong>Environment:</strong> Not initialized (Run INIT).<br>";
                 }
 
-                if (selectedCar !== 'all') {
-                    let sc = data.find(c => c.addr === selectedCar);
+                if (selectedCarId !== 'all') {
+                    let sc = data.find(c => c.id === selectedCarId);
                     if (sc) {
                         infoStr += `<strong>Selected Car (${sc.addr}):</strong> Distance: ${sc.distance.toFixed(2)}cm, Yaw: ${sc.yaw.toFixed(2)}°`;
                     } else {
@@ -450,17 +465,19 @@
 
         let activeKeys = {};
 
+        // Handle keydown events for continuous control
         document.addEventListener('keydown', (e) => {
             if (keyMap[e.code] && !activeKeys[e.code]) {
                 activeKeys[e.code] = true;
-                sendCommand(keyMap[e.code], selectedCar);
+                sendCommand(keyMap[e.code], selectedCarId);
             }
         });
 
+        // Handle keyup events to stop movement
         document.addEventListener('keyup', (e) => {
             if (keyMap[e.code]) {
                 delete activeKeys[e.code];
-                sendCommand('S', selectedCar);
+                sendCommand('S', selectedCarId);
             }
         });
 
