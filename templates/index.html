@@ -1,105 +1,249 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>Car Map</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
+        /* Reset and Base Styles */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #f0f0f0;
-            margin:0; padding:0;
+            background: #f4f6f9;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
         }
+
         header {
-            background: #444;
-            color: #fff;
-            padding: 10px;
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px 20px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-        h1 {
-            margin: 0;
+
+        header h1 {
+            font-size: 1.8em;
         }
+
         .container {
-            padding: 10px;
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
         }
+
+        /* Controls Section */
         #controls {
             background: #fff;
-            padding: 10px;
-            border-radius: 5px;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             display: flex;
-            align-items: center;
             flex-wrap: wrap;
+            align-items: center;
+            gap: 10px;
         }
-        #carSelect, #cmdInput, #sendBtn, #refreshBtn {
-            margin: 5px;
-            padding: 5px;
-            border-radius: 3px;
+
+        #controls label {
+            font-weight: bold;
+            margin-right: 5px;
+        }
+
+        #carSelect, #cmdInput {
+            flex: 1 1 200px;
+            padding: 8px 12px;
             border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 1em;
         }
+
         #sendBtn, #refreshBtn {
-            background: #007BFF;
-            color: #fff;
+            padding: 10px 20px;
             border: none;
-            cursor:pointer;
+            border-radius: 5px;
+            background: #3498db;
+            color: #fff;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background 0.3s;
         }
+
         #sendBtn:hover, #refreshBtn:hover {
-            background: #0056b3;
+            background: #2980b9;
         }
+
+        /* Map Canvas */
         #map {
-            border:1px solid #ccc;
-            background:#eee;
-            display: block;
-            margin: 20px auto;
+            width: 100%;
+            height: 0;
+            padding-bottom: 75%; /* 4:3 Aspect Ratio */
+            position: relative;
+            background: #ecf0f1;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
+
+        #map canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Interactive Controls */
         .controls {
-            margin-top: 20px;
-            background:#fff;
-            padding:10px;
-            border-radius:5px;
-        }
-        .controls h2 {
-            margin-top:0;
-        }
-        .controls p {
-            margin: 5px 0;
-        }
-        .hint {
-            font-size: 0.9em; color: #555;
-        }
-        #info {
-            margin-top: 10px;
-            font-size: 0.9em;
-            color: #333;
             background: #fff;
-            padding:10px;
-            border-radius:5px;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .controls h2 {
+            margin-bottom: 10px;
+            font-size: 1.4em;
+            color: #2c3e50;
+        }
+
+        .controls p {
+            margin-bottom: 8px;
+            color: #34495e;
+        }
+
+        .hint {
+            font-size: 0.9em;
+            color: #7f8c8d;
+        }
+
+        /* Info Section */
+        #info {
+            background: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            font-size: 0.95em;
+            color: #2c3e50;
+        }
+
+        /* Mobile Controls */
+        #mobileControls {
+            display: none;
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(44, 62, 80, 0.9);
+            padding: 15px;
+            border-radius: 50px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            z-index: 1000;
+        }
+
+        #mobileControls button {
+            background: none;
+            border: none;
+            color: #ecf0f1;
+            font-size: 1.5em;
+            margin: 0 10px;
+            cursor: pointer;
+            transition: color 0.3s;
+        }
+
+        #mobileControls button:hover {
+            color: #3498db;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            #controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            #carSelect, #cmdInput {
+                flex: 1 1 100%;
+            }
+
+            #map {
+                padding-bottom: 100%; /* 1:1 Aspect Ratio */
+            }
+
+            .controls h2 {
+                font-size: 1.2em;
+            }
+
+            .controls p {
+                font-size: 0.9em;
+            }
+
+            /* Show Mobile Controls */
+            #mobileControls {
+                display: flex;
+            }
         }
     </style>
 </head>
 <body>
-    <header><h1>Car Map</h1></header>
+    <header>
+        <h1>Car Map</h1>
+    </header>
     <div class="container">
+        <!-- Controls -->
         <div id="controls">
-            Select Car:
-            <select id="carSelect">
-                <option value="all">All Cars</option>
-            </select>
-            <button id="refreshBtn">Refresh Cars</button>
-            Command:
-            <input type="text" id="cmdInput" placeholder="F,B,L,R,S,RL,RR,SPIN,FLIP,CIRCLE,DANCE,ZIGZAG,INIT,ROT:<deg>,MOVE:<cm>" />
-            <button id="sendBtn">Send</button>
+            <div style="display: flex; align-items: center; gap: 5px;">
+                <label for="carSelect">Select Car:</label>
+                <select id="carSelect">
+                    <option value="all">All Cars</option>
+                </select>
+                <button id="refreshBtn">Refresh</button>
+            </div>
+            <div style="flex: 1 1 100%;">
+                <label for="cmdInput">Command:</label>
+                <input type="text" id="cmdInput" placeholder="F, B, L, R, S, RL, RR, SPIN, FLIP, etc." />
+                <button id="sendBtn">Send</button>
+            </div>
         </div>
 
-        <canvas id="map" width="800" height="600"></canvas>
+        <!-- Map -->
+        <div id="map">
+            <canvas id="mapCanvas"></canvas>
+        </div>
 
+        <!-- Interactive Controls -->
         <div class="controls">
             <h2>Interactive Controls</h2>
             <p>Use Arrow keys or WASD for basic moves.</p>
             <p>Try commands like:  
-               - INIT (to setup environment)  
-               - ROT:90 or MOVE:25  
-               - Tricks: SPIN, FLIP, CIRCLE, DANCE, ZIGZAG, SQUARE, FIG8, WAVE
+               <ul>
+                   <li><strong>INIT</strong> (to setup environment)</li>
+                   <li><strong>ROT:90</strong> or <strong>MOVE:25</strong></li>
+                   <li>Tricks: <strong>SPIN, FLIP, CIRCLE, DANCE, ZIGZAG, SQUARE, FIG8, WAVE</strong></li>
+               </ul>
             </p>
         </div>
 
+        <!-- Info Section -->
         <div id="info"></div>
+    </div>
+
+    <!-- Mobile Touch Controls -->
+    <div id="mobileControls">
+        <button id="cmdF" title="Forward">⬆️</button>
+        <div style="display: flex; flex-direction: row;">
+            <button id="cmdL" title="Left">⬅️</button>
+            <button id="cmdS" title="Stop">⏹️</button>
+            <button id="cmdR" title="Right">➡️</button>
+        </div>
+        <button id="cmdB" title="Backward">⬇️</button>
     </div>
 
     <script>
@@ -107,15 +251,33 @@
         const cmdInput = document.getElementById('cmdInput');
         const sendBtn = document.getElementById('sendBtn');
         const refreshBtn = document.getElementById('refreshBtn');
-        const canvas = document.getElementById('map');
+        const canvas = document.getElementById('mapCanvas');
         const ctx = canvas.getContext('2d');
         const infoDiv = document.getElementById('info');
+
+        const mobileButtons = {
+            F: document.getElementById('cmdF'),
+            B: document.getElementById('cmdB'),
+            L: document.getElementById('cmdL'),
+            R: document.getElementById('cmdR'),
+            S: document.getElementById('cmdS')
+        };
 
         let selectedCar = 'all';
         let knownCars = [];
         let envWidth = 0;
         let envHeight = 0;
 
+        // Set canvas size dynamically
+        function resizeCanvas() {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Event Listeners
         carSelect.addEventListener('change', () => {
             selectedCar = carSelect.value;
         });
@@ -124,6 +286,7 @@
             const cmd = cmdInput.value.trim();
             if (cmd) {
                 sendCommand(cmd, selectedCar);
+                cmdInput.value = '';
             }
         });
 
@@ -131,11 +294,33 @@
             fetchCars(true);
         });
 
+        // Mobile Button Events
+        Object.keys(mobileButtons).forEach(key => {
+            mobileButtons[key].addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                sendCommand(key, selectedCar);
+            });
+            mobileButtons[key].addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                sendCommand(key, selectedCar);
+            });
+            // Optionally, stop command on touchend/mouseup
+            mobileButtons[key].addEventListener('touchend', (e) => {
+                e.preventDefault();
+                sendCommand('S', selectedCar);
+            });
+            mobileButtons[key].addEventListener('mouseup', (e) => {
+                e.preventDefault();
+                sendCommand('S', selectedCar);
+            });
+        });
+
         function sendCommand(cmd, target) {
             const formData = new FormData();
             formData.append('cmd', cmd);
             formData.append('target', target);
-            fetch('/command', {method:'POST', body:formData});
+            fetch('/command', {method:'POST', body:formData})
+                .catch(err => console.error('Command Error:', err));
         }
 
         function fetchCars(forceUpdate=false) {
@@ -162,7 +347,8 @@
                 }
 
                 drawCars(data);
-            });
+            })
+            .catch(err => console.error('Fetch Cars Error:', err));
         }
 
         function drawCars(data) {
@@ -178,13 +364,13 @@
             let offsetX = canvas.width/2, offsetY = canvas.height/2;
 
             if (envWidth > 0 && envHeight > 0) {
-                scale = Math.min(canvas.width / envWidth, canvas.height / envHeight);
+                scale = Math.min(canvas.width / envWidth, canvas.height / envHeight) * 0.9;
                 offsetX = (canvas.width - envWidth * scale) / 2;
                 offsetY = (canvas.height - envHeight * scale) / 2;
 
                 // Draw environment boundary
-                ctx.strokeStyle = "green";
-                ctx.lineWidth = 2;
+                ctx.strokeStyle = "#27ae60";
+                ctx.lineWidth = 3;
                 ctx.strokeRect(offsetX, offsetY, envWidth*scale, envHeight*scale);
             }
 
@@ -202,23 +388,25 @@
 
                 // Draw the car as a circle
                 ctx.beginPath();
-                ctx.arc(x,y,8,0,Math.PI*2);
-                ctx.fillStyle = "blue";
+                ctx.arc(x, y, 10, 0, Math.PI*2);
+                ctx.fillStyle = "#2980b9";
                 ctx.fill();
-                ctx.fillStyle = "black";
-                ctx.font = "12px Arial";
-                ctx.fillText(car.addr, x+12, y+4);
+                ctx.fillStyle = "#fff";
+                ctx.font = "bold 12px Arial";
+                ctx.textAlign = "left";
+                ctx.textBaseline = "middle";
+                ctx.fillText(car.addr, x + 12, y);
 
                 // Draw direction line (car yaw)
                 const rad = car.yaw * Math.PI/180;
-                const lineLength = 20;
+                const lineLength = 25;
                 const x2 = x + Math.cos(rad)*lineLength;
                 const y2 = y - Math.sin(rad)*lineLength;
                 ctx.beginPath();
-                ctx.moveTo(x,y);
-                ctx.lineTo(x2,y2);
-                ctx.strokeStyle = "red";
-                ctx.lineWidth = 2;
+                ctx.moveTo(x, y);
+                ctx.lineTo(x2, y2);
+                ctx.strokeStyle = "#e74c3c";
+                ctx.lineWidth = 3;
                 ctx.stroke();
             });
 
@@ -231,16 +419,18 @@
                     infoStr += "<strong>Environment:</strong> Not initialized (Run INIT).<br>";
                 }
 
-                let sc = data.find(c => c.addr === selectedCar);
-                if (sc) {
-                    infoStr += "<strong>Selected Car ("+sc.addr+"):</strong> Distance: " 
-                        + sc.distance.toFixed(2) 
-                        + "cm, Yaw: " 
-                        + sc.yaw.toFixed(2) 
-                        + "°";
+                if (selectedCar !== 'all') {
+                    let sc = data.find(c => c.addr === selectedCar);
+                    if (sc) {
+                        infoStr += `<strong>Selected Car (${sc.addr}):</strong> Distance: ${sc.distance.toFixed(2)}cm, Yaw: ${sc.yaw.toFixed(2)}°`;
+                    } else {
+                        infoStr += `<strong>Selected Car:</strong> Not found.`;
+                    }
                 }
 
                 infoDiv.innerHTML = infoStr;
+            } else {
+                infoDiv.innerHTML = "<strong>No cars detected.</strong>";
             }
         }
 
@@ -273,6 +463,9 @@
                 sendCommand('S', selectedCar);
             }
         });
+
+        // Initialize by fetching cars
+        fetchCars(true);
     </script>
 </body>
 </html>
